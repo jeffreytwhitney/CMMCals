@@ -51,6 +51,54 @@ def get_recent_files(directory_path, hours=48):
 
     return recent_files
 
+def get_latest_report_times_by_machine(directory_path, machine_name_length=5):
+    """
+    Enumerate files in the specified directory and return the latest report time for each machine.
+
+    Args:
+        directory_path: Path to the directory to scan
+        machine_name_length: Length of the machine prefix in file names (default: 5)
+
+    Returns:
+        Dict keyed by machine name with latest report datetime values
+    """
+    dir_path = Path(directory_path)
+
+    if not dir_path.exists():
+        print(f"Error: Directory '{directory_path}' does not exist.")
+        return {}
+
+    if not dir_path.is_dir():
+        print(f"Error: '{directory_path}' is not a directory.")
+        return {}
+
+    latest_report_times = {}
+
+    try:
+        for item in dir_path.iterdir():
+            if not item.is_file():
+                continue
+
+            file_name = item.name.strip()
+            if len(file_name) < machine_name_length:
+                continue
+
+            machine_name = file_name[:machine_name_length]
+            mod_time = datetime.fromtimestamp(item.stat().st_mtime)
+            current_latest = latest_report_times.get(machine_name)
+
+            if current_latest is None or mod_time > current_latest:
+                latest_report_times[machine_name] = mod_time
+    except PermissionError as e:
+        print(f"Error: Permission denied while accessing '{directory_path}': {e}")
+        return {}
+    except Exception as e:
+        print(f"Error while scanning directory: {e}")
+        return {}
+
+    return latest_report_times
+
+
 def get_machine_descriptions_from_xml(xml_path):
     """
     Parse the CMMs.xml file and return a lookup of machine name -> description.
@@ -145,6 +193,9 @@ def main():
 
     print(f"Found {len(machine_names)} machines in CMMs.xml")
 
+    # Get each machine's latest report date from all available files.
+    latest_report_times = get_latest_report_times_by_machine(cal_results_dir)
+
     # Get files from the past 48 hours
     recent_files = get_recent_files(cal_results_dir, hours=48)
 
@@ -155,12 +206,7 @@ def main():
     for file_path in recent_files:
         file_name = file_path.name.strip()
         if len(file_name) >= 5:
-            machine_name = file_name[0:5]
-            machines_with_recent_files.add(machine_name)
-            # Debug: show sample files
-            if len(machines_with_recent_files) <= 5:
-                mod_time = datetime.fromtimestamp(file_path.stat().st_mtime)
-
+            machines_with_recent_files.add(file_name[0:5])
 
     print(f"Found {len(machines_with_recent_files)} machines with recent cal results")
     print("-" * 80)
@@ -170,9 +216,16 @@ def main():
 
     if machines_not_run:
         print(f"{current_date}: Machines that have NOT calibrated in the past 48 hours ({len(machines_not_run)}):\n")
+        print(f"{'Machine':<8} {'Days Since Cal':<15} Description")
+        print("-" * 80)
+
+        now = datetime.now()
         for machine_name in machines_not_run:
             description = machine_descriptions.get(machine_name, "")
-            print(f"  {machine_name}\t\t{description}")
+            last_report_time = latest_report_times.get(machine_name)
+            days_since_cal = (now - last_report_time).days if last_report_time else None
+            days_since_text = str(days_since_cal) if days_since_cal is not None else "Never"
+            print(f"{machine_name:<8} {days_since_text:<15} {description}")
     else:
         print(f"{current_date}: All machines have calibrated in the past 48 hours!")
 
